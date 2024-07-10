@@ -1,0 +1,627 @@
+---
+title: "Aducanumab"
+author: "Lacey Nixon"
+date: "2024-04-17"
+output:
+  pdf_document:
+    toc: true
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float: true
+subtitle: 'Preprocessing: Filtering, Normalization, Clustering'
+editor_options:
+  chunk_output_type: inline
+---
+
+#Setup 
+##Working Directory
+```{r setup}
+knitr::opts_knit$set(root.dir=".")
+```
+
+##Libraries
+```{r}
+#install.packages('gridExtra')
+library(Seurat)
+library(ggplot2)
+library(stringr)
+library(gridExtra)
+library(egg)
+library(dplyr)
+```
+
+##Read in Data, Create Seurat object
+```{r}
+prefix <- "../counts/"
+suffix <- "/outs/filtered_feature_bc_matrix.h5"
+
+
+samples <- c("705A_Adu_Male", "823A_IgG_Male")
+newnames <- c("adu.m.705A", "igg.m.823A")
+for (i in 1:length(samples)) {
+  obj <- CreateSeuratObject(Read10X_h5(paste0(prefix, samples[i], suffix)))
+  assign(newnames[i], obj)
+}
+remove(obj)
+
+mouse <- merge(x = adu.m.705A, y = igg.m.823A, add.cell.ids = newnames, project = "aducanumab.mice.")
+
+remove(adu.m.705A, igg.m.823A)
+gc()
+```
+
+## Variables 
+Setting Thresholds for Filtering 
+General ballpark: 
+ncount - keeping under 25k 
+nfeature - keeping under 6k 
+complexity - keeping over 0.8 
+```{r}
+ncountmax <- 25000
+ncountmin <- 0
+nfeaturemax <- 6000
+nfeaturemin <- 0
+complexitymin <- 0.8
+percent.mt.max <- 1
+```
+
+
+## Metadata 
+
+###Percent MT
+Filtering MT genes 
+```{r}
+## See features 
+#View(as.matrix(rownames(mouse@assays$RNA@features)))
+
+mouse[["percent.mt"]] <- PercentageFeatureSet(mouse, pattern = "^mt-")
+mouse[["complexity"]] <- log10(mouse$nFeature_RNA) / log10(mouse$nCount_RNA)
+```
+
+"adu.m.705A", "igg.m.823A"
+
+###Sample column 
+Parentheses around part of string I want
+([aduig]+\\.[mf]\\.[0-9]+[AB]) is the sample name 
+
+```{r}
+barcodes <- colnames(mouse)
+sample <- str_match(barcodes, "([aduig]+\\.[mf]\\.[0-9]+[AB])_[AGTC]+\\-[0-9]")[,2]
+mouse$sample <- sample 
+```
+
+
+#Pre-Filtering QC 
+Pick favorite quality control graphs 
+Visualizing 
+nFeature <- unique number of genes
+ncount <- total number of transcripts 
+percent.mt <- percentage of mitochondrial transcripts 
+
+##Violin Plots 
+```{r}
+png(file="../results/prefilteringqc/vlnplots.png", 
+    width = 600, height = 350)
+VlnPlot(object = mouse, 
+        features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+        group.by = "sample",
+        ncol = 3,
+        pt.size = 0)
+dev.off()
+```
+
+##Scatter plots 
+Grid arrange scatter plots 
+```{r}
+ncount.nfeature <- ggplot(mouse@meta.data, 
+                          aes(x = nCount_RNA, y = nFeature_RNA, color = percent.mt)) +
+                   geom_point() + 
+                   geom_hline(yintercept = 200, linetype = 'dotted') +
+                   geom_hline(yintercept = 10000, linetype = 'dotted')
+                   facet_wrap(~sample)
+
+ncount.percentmt <- ggplot(mouse@meta.data, 
+                          aes(x = nCount_RNA, y = percent.mt, color = percent.mt)) +
+                   geom_point() + 
+                   facet_wrap(~sample)
+
+png(file="../results/prefilteringqc/prefilteringscatterplots.png", 
+    width = 700, height = 450)
+    grid.arrange(ncount.nfeature, ncount.percentmt,
+                 nrow = 2, ncol = 1)
+dev.off()
+```
+
+
+
+## Density plots 
+Note - alpha is opacity 
+Do for percent mt , nfeature , cell complexity
+In the future - look at ribosomal and hemoglobin
+Save graphs in results/prefilterngqc 
+
+Grid Arrange - Density Plots in One Image 
+```{r}
+ncountdensity <-   ggplot(mouse@meta.data, 
+                         aes(color = sample, 
+                         x = nCount_RNA, 
+                         fill = sample)) + 
+                   geom_density(alpha = 0.2) + 
+                   theme_classic() +
+                   geom_vline(xintercept = 25000, linetype = "dashed")
+ncountdensity
+
+nfeaturedensity <-  ggplot(mouse@meta.data, 
+                            aes(color = sample, 
+                            x = nFeature_RNA, 
+                            fill = sample)) + 
+                    geom_density(alpha = 0.2) + 
+                    theme_classic() +
+                    geom_vline(xintercept = 6000, linetype = "dashed")
+nfeaturedensity
+
+percentmtdensity <- ggplot(mouse@meta.data, 
+                           aes(color = sample, 
+                           x = percent.mt, 
+                           fill = sample)) + 
+                    geom_density(alpha = 0.2) + 
+                    theme_classic() +
+                    geom_vline(xintercept = 1, linetype = "dashed")
+percentmtdensity
+
+complexitydensity <-   ggplot(mouse@meta.data, 
+                              aes(color = sample, 
+                              x = complexity,
+                              fill = sample)) + 
+                        geom_density(alpha = 0.2) + 
+                        theme_classic() + 
+                        geom_vline(xintercept = 0.8, linetype = "dashed")
+complexitydensity
+
+
+png(file="../results/prefilteringqc/prefilteringdensityplots.png", 
+    width = 700, height = 450)
+    grid.arrange(ncountdensity, nfeaturedensity, percentmtdensity, complexitydensity, 
+                 nrow = 2, ncol = 2)
+
+dev.off()
+
+```
+
+
+##Cells per sample 
+plot of number of cells - bar graph of cells per sample (table(sample))
+pre and post filtering (ncells1vsncells2)
+```{r}
+data <- as.data.frame(table(mouse$sample))
+colnames(data) <- c("sample", "frequency")
+
+ncells1 <- ggplot(data, 
+                  aes(x = sample, y = frequency, fill = sample)) + 
+                  geom_col() +
+                  geom_text(aes(label = frequency), vjust = -0.5)
+ncells1
+
+png(file="../results/prefilteringqc/ncells1.png",
+    width = 600, height = 350)
+    ggplot(data, 
+           aes(x = sample, y = frequency, fill = sample)) + 
+           geom_col() +
+           geom_text(aes(label = frequency), vjust = -0.5)
+dev.off()
+  
+```
+  
+   
+#Filtering 
+Filter cells out, then filter genes out
+Subset is what you are keeping 
+ncount - keeping under 25k 
+nfeature - keeping under 6k 
+complexity - keeping over 0.8 
+
+##Cell level Filtering
+```{r}
+dim(mouse)
+mouse.filtered <- subset(mouse, 
+                          subset = (nCount_RNA < ncountmax) & 
+                            (nFeature_RNA < nfeaturemax) &
+                            (complexity > complexitymin) &
+                            (percent.mt < percent.mt.max))
+dim(mouse.filtered) 
+```
+
+
+##Gene level filtering 
+Keeping genes expressed in at least 10 cells 
+```{r}
+mouse.filtered <- JoinLayers(mouse.filtered)
+
+counts <- GetAssayData(mouse.filtered, layer = "counts")
+nonzero <- counts > 0
+keep <- Matrix::rowSums(nonzero) >= 10
+counts.filtered <- counts[keep,]
+```
+
+New object with filtered 
+```{r}
+mouse.filtered <- CreateSeuratObject(counts.filtered, meta.data = mouse.filtered@meta.data)
+dim(mouse.filtered)
+```
+
+
+#Post-Filtering QC 
+Same plots as pre-filtering QC - now use mouse.filtered object and save in results/postfilteringqc 
+
+##Violin Plots 
+```{r}
+png(file="../results/postfilteringqc/vlnplots.png", 
+    width = 600, height = 350)
+VlnPlot(object = mouse.filtered, 
+        features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), 
+        group.by = "sample",
+        ncol = 3,
+        pt.size = 0)
+dev.off()
+```
+
+##Scatter Plots 
+```{r}
+ncount.nfeature2 <- ggplot(mouse.filtered@meta.data, 
+                          aes(x = nCount_RNA, y = nFeature_RNA, color = percent.mt)) +
+                   geom_point() + 
+                  # geom_hline(yintercept = nfeaturemax, linetype = 'dotted') +
+                  # geom_hline(xintercept = ncountmax, linetype = 'dotted')
+                   facet_wrap(~sample)
+
+ncount.percentmt2 <- ggplot(mouse.filtered@meta.data, 
+                          aes(x = nCount_RNA, y = percent.mt, color = percent.mt)) +
+                   geom_point() + 
+                   facet_wrap(~sample)
+
+png(file="../results/postfilteringqc/postfilteringscatterplots.png", 
+    width = 700, height = 450)
+    grid.arrange(ncount.nfeature2, ncount.percentmt2,
+                 nrow = 2, ncol = 1)
+dev.off()
+```
+
+##Density Plots 
+```{r}
+ncountdensity2 <-   ggplot(mouse.filtered@meta.data, 
+                         aes(color = sample, 
+                         x = nCount_RNA, 
+                         fill = sample)) + 
+                   geom_density(alpha = 0.2) + 
+                   theme_classic() +
+                   geom_vline(xintercept = 25000, linetype = "dashed")
+ncountdensity2
+
+nfeaturedensity2 <-  ggplot(mouse.filtered@meta.data, 
+                            aes(color = sample, 
+                            x = nFeature_RNA, 
+                            fill = sample)) + 
+                    geom_density(alpha = 0.2) + 
+                    theme_classic() +
+                    geom_vline(xintercept = 6000, linetype = "dashed")
+nfeaturedensity2
+
+percentmtdensity2 <- ggplot(mouse.filtered@meta.data, 
+                           aes(color = sample, 
+                           x = percent.mt, 
+                           fill = sample)) + 
+                    geom_density(alpha = 0.2) + 
+                    theme_classic() +
+                    geom_vline(xintercept = 1, linetype = "dashed")
+percentmtdensity2
+
+complexitydensity2 <-   ggplot(mouse.filtered@meta.data, 
+                              aes(color = sample, 
+                              x = complexity,
+                              fill = sample)) + 
+                        geom_density(alpha = 0.2) + 
+                        theme_classic() + 
+                        geom_vline(xintercept = 0.8, linetype = "dashed")
+complexitydensity2
+
+
+png(file="../results/postfilteringqc/postfilteringdensityplots.png", 
+    width = 700, height = 450)
+    grid.arrange(ncountdensity2, nfeaturedensity2, percentmtdensity2, complexitydensity2, 
+                 nrow = 2, ncol = 2)
+
+dev.off()
+```
+
+
+##Cells per sample 
+```{r}
+data2 <- as.data.frame(table(mouse.filtered$sample))
+colnames(data2) <- c("sample", "frequency")
+
+ncells2 <- ggplot(data2, aes(x = sample, y = frequency, fill = sample)) + 
+           geom_col() + 
+           geom_text(aes(label = frequency), vjust = -0.5)
+ncells2
+
+png(file="../results/postfilteringqc/ncells2.png",
+    width = 600, height = 350)
+    ggplot(data2, 
+           aes(x = sample, y = frequency, fill = sample)) + 
+           geom_col()
+           geom_text(aes(label = frequency), vjust = -0.5)
+dev.off()
+
+
+```
+
+###Cells Pre vs Post Filtering 
+```{r}
+png(file="../results/postfilteringqc/ncells1vncells2.png", 
+    width = 700, height = 700)
+    grid.arrange(ncells1, ncells2, 
+                 nrow = 2, ncol = 1)
+
+dev.off()
+```
+
+
+##Top transcripts
+```{r}
+toptranscriptsdataframe <- data.frame(genename = rownames(mouse.filtered), 
+                                      rsums = rowSums(x = mouse.filtered, slot = "counts"))
+toptranscriptsdataframe <- write.table(toptranscriptsdataframe, "../results/postfilteringqc/toptranscriptsfiltered.tsv", quote = FALSE, row.names = FALSE)
+
+
+```
+
+
+##Boxplot log10nFeature_RNA per cell vs sample 
+```{r}
+png(file = "../results/postfilteringqc/log10nfeaturepercellpersample.png", 
+         width = 700, height = 700)
+
+ggplot(mouse.filtered@meta.data, aes(x = sample, y = log10(nFeature_RNA), fill = sample)) + 
+geom_boxplot()
+
+dev.off()
+
+```
+
+
+# Unwanted Variaton 
+## New Function - Cell Cycle Function 
+```{r}
+cellcycleqc <- function(obj, species, markersPath, samplecol = "sample", outDir = NULL, verbose = TRUE){
+
+  # Testing 
+  #obj <- mouse.filtered
+  #species <- "mouse"
+  #markersPath <- "../refs/cell_cycle_markers.tsv"
+  #samplecol <- "sample" 
+  #outDir <- "../results/unwantedvariation/"
+  #verbose <- TRUE
+  
+  # set output dir 
+  output <- "./" 
+  if(!is.null(outDir)) {output <- outDir}
+  if(!endsWith(output, "/")) { output <- paste0(output, "/")}
+ 
+  #Log normalization 
+  if(verbose) {print("Normalizing data")}
+  obj <- NormalizeData(obj)
+  
+  #Load cell cycle markers 
+  phase.markers <- read.delim(markersPath, header = TRUE, sep = "\t") 
+  phase.markers <- phase.markers[phase.markers$species==species,]
+  
+  #save cycle marker list 
+  write.table(phase.markers, 
+              paste0(output, species, "_cell_cycle_phase_markers.tsv"),
+              quote = FALSE, sep = "\t", row.names = FALSE) 
+  
+  
+  
+  #subset cell cycle markers 
+  ##S phase genes 
+  s_genes <- phase.markers %>%
+          dplyr::filter(phase == "S") %>%
+          pull("gene_name") 
+  
+  ## G2M Genes 
+  g2m_genes <- phase.markers %>%
+          dplyr::filter(phase == "G2/M") %>%
+          pull("gene_name")  
+  
+  # score cells 
+  obj <- CellCycleScoring(obj, 
+                          g2m.features = g2m_genes, 
+                          s.features = s_genes)
+  
+  
+  # identify most variable genes - find variable features 
+  obj <- FindVariableFeatures(obj, 
+                     selection.method = "vst",
+                     nfeatures = 2000, 
+                     verbose = FALSE)
+ 
+  # Scale the counts 
+  obj <- ScaleData(obj)
+  
+  # perform PCA 
+  obj <- RunPCA(obj)
+ 
+  # QC plots dim plot pc1 and pc2 
+  
+  qcplot1 <- DimPlot(obj,
+             reduction = "pca",
+             group.by= "Phase")
+        
+  qcplot2 <- DimPlot(obj,
+             reduction = "pca",
+             group.by= "Phase", 
+             split.by = "Phase") 
+  
+ # percent phase bar graph
+  meta <- dplyr::rename(obj@meta.data, phase_sample_split=sample)
+  obj@meta.data <- meta 
+  phase <- obj$Phase
+  
+  qcplot3 <- obj@meta.data %>%
+    group_by(phase_sample_split, Phase) %>%
+    dplyr::count() %>%
+    group_by(phase_sample_split) %>%
+    dplyr::mutate(percent = 100*n/sum(n)) %>%
+    ungroup() %>%
+    ggplot(aes(x = phase_sample_split, y = percent, fill = Phase)) +
+    geom_col() +
+    ggtitle("Percentage of cell phase per sample") +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    labs(x = "Sample")
+  
+  png(file="../results/unwantedvariation/cellcycleqcgraphs.png", 
+    width = 1200, height = 400)
+    
+    grid.arrange(qcplot1, qcplot2, qcplot3, 
+                 nrow = 1, ncol = 3)
+
+  dev.off()
+
+ 
+  # Return saves what we care about  
+  return(phase)
+
+  
+  }
+```
+
+```{r}
+#cellcycleqc <- function(obj, species, markersPath, samplecol = "sample", outDir = NULL, verbose = TRUE){
+
+mouse.filtered[["phase"]] <- cellcycleqc(mouse.filtered,
+                             species = "mouse",
+                             markersPath = "../refs/cell_cycle_markers.tsv",
+                             samplecol = "sample",
+                             outDir = "../results/unwantedvariation/",
+                             verbose = TRUE) 
+
+
+
+```
+
+
+## New Function - Mitochondrial Expression
+```{r}
+mitochondrialqc <- function(obj, samplecol = "sample", usermitocol = NULL, outDir = NULL, verbose = TRUE){
+
+  # Testing 
+  #obj <- mouse.filtered
+  #samplecol <- "sample" 
+  #usermitocol <- NULL
+  #outDir <- "../results/unwantedvariation/"
+  #verbose <- TRUE
+  
+  # set output dir 
+  output <- "./" 
+  if(!is.null(outDir)) {output <- outDir}
+  if(!endsWith(output, "/")) { output <- paste0(output, "/")}
+  
+  # set percent.mt column 
+  mito_column <- "percent.mt"
+  if(!is.null(usermitocol)) {mito_column <- usermitocol}
+ 
+  #Log normalization 
+  if(verbose) {print("Normalizing data")}
+  obj <- NormalizeData(obj)
+  
+  
+  # identify most variable genes - find variable features 
+  obj <- FindVariableFeatures(obj, 
+                     selection.method = "vst",
+                     nfeatures = 2000, 
+                     verbose = FALSE)
+ 
+  # Scale the counts 
+  obj <- ScaleData(obj)
+  
+  # perform PCA 
+  obj <- RunPCA(obj)
+ 
+  #summary(obj@meta.data$percent.mt)
+  
+  #mito factor
+  meta <- obj@meta.data
+  first <- as.numeric(summary(meta[, mito_column])[2])
+  mean <- as.numeric(summary(meta[, mito_column])[4])
+  third <- as.numeric(summary(meta[, mito_column])[5])
+  
+  # make mito_factor column in dataframe 
+  if(verbose){print("Factoring percent.mt")}
+  obj[["mito_factor"]] <- cut(meta[,mito_column],
+                              breaks = c(-Inf, first, mean, third, Inf),
+                              labels = c("Low", "Medium", "Medium high", "High"))
+  
+  
+ 
+   # QC plots dim plot pc1 pc2 
+  
+  qcplot1 <- DimPlot(obj,
+             reduction = "pca",
+             group.by= "mito_factor")
+        
+  qcplot2 <- DimPlot(obj,
+             reduction = "pca",
+             group.by= "mito_factor", 
+             split.by = "mito_factor") 
+  
+  meta <- dplyr::rename(obj@meta.data, mito_sample_split=samplecol)
+  obj@meta.data <- meta 
+  
+  qcplot3 <- obj@meta.data %>%
+    group_by(mito_sample_split, mito_factor) %>%
+    dplyr::count() %>%
+    group_by(mito_sample_split) %>%
+    dplyr::mutate(percent = 100*n/sum(n)) %>%
+    ungroup() %>%
+    ggplot(aes(x = mito_sample_split, y = percent, fill = mito_factor)) +
+    geom_col() +
+    ggtitle("Percentage of mito_factor per sample") +
+    theme_classic() +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    labs(x = "Sample")
+
+  png(file="../results/unwantedvariation/percentmitographs.png", 
+      width = 800, height = 500)
+  
+  plots <- list(qcplot1, qcplot2, qcplot3)
+  layout <- rbind(c(2,2), c(1,3))
+  grid <- grid.arrange(grobs = plots, layout_matrix=layout)
+   
+  dev.off()
+
+ 
+  #View(obj@meta.data)
+  
+  #return mito vector 
+  mito <- obj$mito_factor
+ # phase 
+ 
+  # Return saves what we care about  
+  return(mito)
+#  obj$Phase
+
+  }
+```
+
+```{r}
+#mitochondrialqc <- function(obj, samplecol = "sample", usermitocol = NULL, outDir = NULL, verbose = TRUE)
+mouse.filtered[["mito_factor"]] <- mitochondrialqc(mouse.filtered,
+                                                   usermitocol = "percent.mt",
+                                                   samplecol = "sample",
+                                                   outDir = "../results/unwantedvariation/",
+                                                   verbose = TRUE) 
+```
+
+
