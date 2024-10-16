@@ -329,6 +329,22 @@ FeaturePlot(object = mouse.unannotated,
             repel = TRUE) +
   scale_colour_gradientn(colours = c("white", "lightblue", "yellow", "orange", "red"))
 
+FeaturePlot(object = mouse.unannotated, 
+                        features = c("Pdzrn3"),
+                         order = TRUE,
+                         min.cutoff = 'q10', 
+                         label = TRUE,
+            repel = TRUE) +
+  scale_colour_gradientn(colours = c("white", "lightblue", "yellow", "orange", "red"))
+
+FeaturePlot(object = mouse.unannotated, 
+                        features = c("Khdrbs3"),
+                         order = TRUE,
+                         min.cutoff = 'q10', 
+                         label = TRUE,
+            repel = TRUE) +
+  scale_colour_gradientn(colours = c("white", "lightblue", "yellow", "orange", "red"))
+
 ```
 
 
@@ -344,7 +360,8 @@ fibroblast: Dcn
 pericytes/mural: Rgs5, Acta2
 neuron: Syt1, Bcl6, Parm1 
 interneuron: Gad2, Pvalb
-
+# QC Plots 
+## Violin plots 
 ```{r}
 # Astrocytes
 VlnPlot(object = mouse.unannotated,
@@ -383,21 +400,22 @@ VlnPlot(object = mouse.unannotated,
 
 # All 
 VlnPlot(object = mouse.unannotated,
-        features = c("Gja1", "Gli3", "Bmpr1b", "Clu"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
-VlnPlot(object = mouse.unannotated,
-        features = c("C1qb", "Cx3cr1", "Mrc1"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
-VlnPlot(object = mouse.unannotated,
-        features = c("Flt1", "Lef1", "Ptprb", "Ly6c1", "Vwf"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
-VlnPlot(object = mouse.unannotated,
-        features = c("Dcn", "Col1a1", "Col1a2"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
-VlnPlot(object = mouse.unannotated,
-        features = c("Notch3", "Rgs5", "Acta2"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
-VlnPlot(object = mouse.unannotated,
-        features = c("Syt1", "Bcl6", "Parm1", "Gad2"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
-VlnPlot(object = mouse.unannotated,
-        features = c("Plp1", "Cdh19", "Mpz"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
+        features = c("Gja1", "Gli3", "Bmpr1b", "Clu", "C1qb", "Cx3cr1", "Mrc1","Flt1", "Lef1", "Ptprb", "Ly6c1", "Vwf", "Dcn", "Col1a1", "Col1a2", "Acta2", "Bcl6", "Parm1", "Gad2", "Plp1", "Cdh19", "Mpz"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
 
-
+VlnPlot(object = mouse.unannotated,
+        features = c(
+                      "Cux2", "Bcl6", # 0
+           #          "Usp29", "Dpp6", # 1
+            #         "Opcml", "Pde1a", # 2
+                     "Gli3","Slc1a3", "Clu", # 3 
+                     "Sh3rf2","Rgs9",  # 4
+                     "Vwf", # 5
+                  #   "Dcn",  "Col1a1", # 6
+                     "Plp1","C1qb", "Cx3cr1", # 7 
+                     "Parm1", # 8 
+                     "Gad2", # 9 
+                     "Pdgfra", "Vcan",
+                     "Lef1"), stack = TRUE, flip = TRUE, group.by = "seurat_clusters", split.by = "seurat_clusters")
 # Flt1 Cluster 8
 # Ptprb Cluster 8
 # Vwf Cluster 8 
@@ -417,4 +435,35 @@ Start annotating clusters
 ident function 
 
 Get final UMAP, annotate 
+
+
+# Annotations 
+```{r}
+Idents(mouse.unannotated) <- "seurat_clusters"
+mouse.annotated <- RenameIdents(object = mouse.unannotated,
+                                "0" = "Unknown",  # what marker - why I think it's that 
+                                "1" = "Neuron", 
+                                "2" = "Neuron", 
+                                "3" = "Astrocyte", 
+                                "4" = "Neuron",
+                                "5" = "Oligo/polydendrocyte",
+                                "6" = "Interneuron", 
+                                "7" = "Microglia", 
+                                "8" = "Astrocyte", 
+                                "9" = "Unknown", 
+                                "10" = "Polydendrocyte", 
+                                "11" = "Unknown", 
+                                "12" = "Unknown", 
+                                "13" = "Unknown"
+                                )
+                                
+mouse.annotated$annotated_clusters <- Idents(mouse.annotated)
+Idents(mouse.annotated) <- "annotated_clusters"
+
+DimPlot(mouse.annotated, 
+        reduction = "umap",
+        label = TRUE, 
+        label.size = 6,
+        group.by = "annotated_clusters")
+```
 
