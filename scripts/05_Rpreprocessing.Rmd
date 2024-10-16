@@ -3,12 +3,12 @@ title: "Aducanumab"
 author: "Lacey Nixon"
 date: "2024-04-17"
 output:
-  pdf_document:
-    toc: true
   html_document:
     theme: cerulean
     toc: true
     toc_float: true
+  pdf_document:
+    toc: true
 subtitle: 'Preprocessing: Filtering, Normalization, Clustering'
 editor_options:
   chunk_output_type: inline
@@ -37,17 +37,19 @@ prefix <- "../counts/"
 suffix <- "/outs/filtered_feature_bc_matrix.h5"
 
 
-samples <- c("705A_Adu_Male", "823A_IgG_Male")
-newnames <- c("adu.m.705A", "igg.m.823A")
+samples <- c("734A_Adu_Male", "851A_IgG_Male", "705A_Adu_Male", "823A_IgG_Male")
+newnames <- c("adu.m.734A", "igg.m.851A", "adu.m.705A", "igg.m.823A")
 for (i in 1:length(samples)) {
   obj <- CreateSeuratObject(Read10X_h5(paste0(prefix, samples[i], suffix)))
   assign(newnames[i], obj)
 }
 remove(obj)
 
-mouse <- merge(x = adu.m.705A, y = igg.m.823A, add.cell.ids = newnames, project = "aducanumab.mice.")
+mouse <- merge(x = adu.m.734A, y = c(igg.m.851A, adu.m.705A, igg.m.823A), add.cell.ids = newnames, project = "aducanumab.mice.")
+#mouse2 <- merge(x = adu.m.705A, y = igg.m.823A, add.cell.ids = newnames2, project = "aducanumab.mice.")
+#mouse <- merge(x = mouse, y = mouse2, project = "aducanumab.mice.")
+remove(adu.m.734A, igg.m.851A, adu.m.705A, igg.m.823A)
 
-remove(adu.m.705A, igg.m.823A)
 gc()
 ```
 
@@ -58,12 +60,13 @@ ncount - keeping under 25k
 nfeature - keeping under 6k 
 complexity - keeping over 0.8 
 ```{r}
-ncountmax <- 25000
-ncountmin <- 0
+ncountmax <- 23000
+ncountmin <- 300
 nfeaturemax <- 6000
-nfeaturemin <- 0
-complexitymin <- 0.8
+nfeaturemin <- 300
+complexitymin <- 0.83
 percent.mt.max <- 1
+gene.level.min <- 10
 ```
 
 
@@ -79,7 +82,6 @@ mouse[["percent.mt"]] <- PercentageFeatureSet(mouse, pattern = "^mt-")
 mouse[["complexity"]] <- log10(mouse$nFeature_RNA) / log10(mouse$nCount_RNA)
 ```
 
-"adu.m.705A", "igg.m.823A"
 
 ###Sample column 
 Parentheses around part of string I want
@@ -240,7 +242,7 @@ mouse.filtered <- JoinLayers(mouse.filtered)
 
 counts <- GetAssayData(mouse.filtered, layer = "counts")
 nonzero <- counts > 0
-keep <- Matrix::rowSums(nonzero) >= 10
+keep <- Matrix::rowSums(nonzero) >= gene.level.min
 counts.filtered <- counts[keep,]
 ```
 
@@ -313,7 +315,7 @@ percentmtdensity2 <- ggplot(mouse.filtered@meta.data,
                            fill = sample)) + 
                     geom_density(alpha = 0.2) + 
                     theme_classic() +
-                    geom_vline(xintercept = 1, linetype = "dashed")
+                    geom_vline(xintercept = percent.mt.max, linetype = "dashed")
 percentmtdensity2
 
 complexitydensity2 <-   ggplot(mouse.filtered@meta.data, 
@@ -624,4 +626,206 @@ mouse.filtered[["mito_factor"]] <- mitochondrialqc(mouse.filtered,
                                                    verbose = TRUE) 
 ```
 
+THIS IS GO BACK SPOT FOR RECLUSTERING 
+#Clustering 
+##SCTransform 
+Integration - normalize between samples (e.g. Force integration by cell types, not sample)
+Removes all other differences (could be between samples, could be sex, etc.)
+SCTransform needs to be done before integration 
+```{r}
+#Assays(mouse.filtered)
+
+#split 
+mouse.filtered[["RNA"]] <- split(mouse.filtered[["RNA"]],
+                                 f = mouse.filtered$sample)
+
+# transform 
+options(future.globals.maxSize= 999999999)
+mouse.filtered <- SCTransform(mouse.filtered, verbose = FALSE)
+
+```
+
+##PCA 
+```{r}
+#PCA
+mouse.filtered <- RunPCA(object = mouse.filtered, assay = "SCT")
+
+#Reset idents and levels 
+DefaultAssay(mouse.filtered) <- "SCT"
+#levels eg. order of control vs treatment, male vs female 
+
+ElbowPlot(mouse.filtered)
+saveRDS(mouse.filtered, file =  "../robjects/mouse.filtered")
+```
+
+
+###PCA Plots 
+```{r}
+pca.phase <- DimPlot(mouse.filtered,
+        reduction = "pca",
+        group.by = "phase",
+        split.by = "phase")
+
+pca.phase.sample <- DimPlot(mouse.filtered,
+        reduction = "pca",
+        group.by = "phase",
+        split.by = "sample")
+
+pca.sample <- DimPlot(mouse.filtered,
+        reduction = "pca",
+        group.by = "sample",
+        split.by = "sample")
+
+pca.mito.sample <- DimPlot(mouse.filtered,
+        reduction = "pca",
+        group.by = "mito_factor",
+        split.by = "sample")
+
+pca.mito <- DimPlot(mouse.filtered,
+        reduction = "pca",
+        group.by = "mito_factor",
+        split.by = "mito_factor")
+
+pca.heatmap <- DimHeatmap(mouse.filtered,
+                          dims = 1:9,
+                          balanced = TRUE)
+
+
+
+ png(file="../results/unwantedvariation/pcaplots.png", 
+      width = 800, height = 500)
+  grid.arrange(pca.phase, pca.phase.sample, pca.mito, pca.mito.sample, pca.sample,
+               ncol=2, nrow=3) 
+   
+  dev.off()
+  
+```
+
+```{r}
+
+# Printing out the most variable genes driving PCs
+print(x = mouse.filtered[["pca"]], 
+      dims = 1:10, 
+      nfeatures = 5)
+```
+
+
+##Integration
+UMAP does not overlap
+###Harmony
+Use Harmony 
+```{r}
+mouse.filtered <- IntegrateLayers(object = mouse.filtered,
+                                  method = HarmonyIntegration,
+                                  orig.reduction = "pca",
+                                  new.reduction = "harmony",
+                                  verbose = FALSE)
+```
+
+####Harmony Plots 
+```{r}
+ 
+harmony.phase <- DimPlot(mouse.filtered,
+        reduction = "harmony",
+        group.by = "phase",
+        split.by = "phase")
+
+harmony.phase.sample <- DimPlot(mouse.filtered,
+        reduction = "harmony",
+        group.by = "phase",
+        split.by = "sample")
+
+harmony.sample <- DimPlot(mouse.filtered,
+        reduction = "harmony",
+        group.by = "sample",
+        split.by = "sample")
+
+harmony.mito.sample <- DimPlot(mouse.filtered,
+        reduction = "harmony",
+        group.by = "mito_factor",
+        split.by = "sample")
+
+harmony.mito <- DimPlot(mouse.filtered,
+        reduction = "harmony",
+        group.by = "mito_factor",
+        split.by = "mito_factor")
+
+
+harmony.heatmap <- DimHeatmap(mouse.filtered,
+                          dims = 1:9,
+                          balanced = TRUE)
+
+
+ png(file="../results/unwantedvariation/harmonyplots.png", 
+      width = 800, height = 500)
+  grid.arrange(harmony.phase, harmony.phase.sample, harmony.mito, harmony.mito.sample, harmony.sample,
+               ncol=2, nrow=3) 
+   
+  dev.off()
+```
+
+####Harmony elbow 
+```{r}
+mouse.filtered@reductions$harmony@stdev <- apply(mouse.filtered@reductions$harmony@cell.embeddings, MARGIN = 2, sd)
+ElbowPlot(mouse.filtered, reduction = "harmony")
+```
+
+
+##UMAP 
+```{r}
+# re-join layers 
+mouse.filtered[["RNA"]] <- JoinLayers(mouse.filtered[["RNA"]])
+
+# run UMAP 
+mouse.filtered <- RunUMAP(mouse.filtered, 
+                          dims = 1:10,
+                          reduction = "harmony",
+                          n.components = 3,
+                          assay = "SCT") 
+
+#plot UMAP
+DimPlot(mouse.filtered,
+        shuffle = TRUE) 
+
+DimPlot(mouse.filtered, 
+        split.by = "sample")
+
+```
+Go back and filter 
+
+##Find neighbors
+rejoin layers?
+```{r}
+mouse.filtered <- FindNeighbors(object = mouse.filtered, 
+                                dims = 1:10,
+                                reduction = "harmony",
+                                assay = "SCT")
+
+
+# Determine the clusters for various resolutions                                
+mouse.filtered <- FindClusters(object = mouse.filtered,
+                               resolution = seq(0.1, 0.8, by = 0.1))
+
+# Look at resolution - starting with 0.1 
+Idents(object = mouse.filtered) <- "SCT_snn_res.0.2"
+
+
+#Plot UMAP 
+DimPlot(mouse.filtered, 
+        reduction = "umap",
+        label = TRUE, 
+        label.size = 6,
+        group.by = "SCT_snn_res.0.2")
+
+```
+
+```{r}
+FeaturePlot(mouse.filtered, features = "nCount_RNA") + 
+  scale_colour_gradientn(colours = c("blue", "lightblue", "yellow", "orange", "red")) 
+  
+```
+
+```{r}
+saveRDS(mouse.filtered, file = "../robjects/mouse.unannotated.RDS")
+```
 
